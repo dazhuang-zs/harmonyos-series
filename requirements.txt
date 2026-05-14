@@ -1,0 +1,32 @@
+# Web Framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.2
+pydantic-settings==2.9.1
+python-dotenv==1.1.0
+
+# LLM
+openai==1.82.0
+httpx==0.28.1
+
+# RAG
+langchain==0.3.25
+langchain-community==0.3.21
+langchain-core==0.3.59
+pymilvus==2.5.10
+
+# Embedding
+sentence-transformers==4.1.0
+torch>=2.0.0
+
+# Crawling
+playwright==1.52.0
+beautifulsoup4==4.13.4
+scrapy==2.13.3
+
+# Testing
+pytest==8.4.0
+pytest-asyncio==1.0.0
+
+# Utilities
+aiofiles==24.1.0
