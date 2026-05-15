@@ -4,6 +4,7 @@ from typing import AsyncIterator
 from openai import AsyncOpenAI
 
 from src.core.config import get_settings
+from src.core.models import MiMoModels, DeepSeekModels, OpenAIModels
 
 
 class LLMProvider(ABC):
@@ -32,7 +33,7 @@ class MiMoProvider(LLMProvider):
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         response = await self.client.chat.completions.create(
-            model=kwargs.get("model", "mimo-default"),
+            model=kwargs.get("model", MiMoModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
@@ -41,7 +42,7 @@ class MiMoProvider(LLMProvider):
 
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
         stream = await self.client.chat.completions.create(
-            model=kwargs.get("model", "mimo-default"),
+            model=kwargs.get("model", MiMoModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
@@ -64,7 +65,7 @@ class DeepSeekProvider(LLMProvider):
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         response = await self.client.chat.completions.create(
-            model=kwargs.get("model", "deepseek-chat"),
+            model=kwargs.get("model", DeepSeekModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
@@ -73,7 +74,7 @@ class DeepSeekProvider(LLMProvider):
 
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
         stream = await self.client.chat.completions.create(
-            model=kwargs.get("model", "deepseek-chat"),
+            model=kwargs.get("model", DeepSeekModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
@@ -96,7 +97,7 @@ class OpenAIProvider(LLMProvider):
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
         response = await self.client.chat.completions.create(
-            model=kwargs.get("model", "gpt-4o"),
+            model=kwargs.get("model", OpenAIModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
@@ -105,7 +106,7 @@ class OpenAIProvider(LLMProvider):
 
     async def chat_stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
         stream = await self.client.chat.completions.create(
-            model=kwargs.get("model", "gpt-4o"),
+            model=kwargs.get("model", OpenAIModels.DEFAULT),
             messages=messages,
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 4096),
