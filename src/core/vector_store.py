@@ -17,9 +17,25 @@ def connect_milvus():
 
 def get_or_create_collection(name: str | None = None) -> Collection:
     """获取或创建 Milvus Collection"""
+    from pymilvus import utility
+
     settings = get_settings()
     collection_name = name or settings.milvus_collection
 
+    # 如果集合已存在，直接返回
+    if utility.has_collection(collection_name):
+        collection = Collection(name=collection_name)
+        # 确保索引存在
+        if not collection.indexes:
+            index_params = {
+                "metric_type": "COSINE",
+                "index_type": "IVF_FLAT",
+                "params": {"nlist": 128},
+            }
+            collection.create_index(field_name="embedding", index_params=index_params)
+        return collection
+
+    # 创建新集合
     fields = [
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
         FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
@@ -30,14 +46,12 @@ def get_or_create_collection(name: str | None = None) -> Collection:
 
     collection = Collection(name=collection_name, schema=schema)
 
-    # 创建向量索引（如果不存在）
-    if not collection.indexes:
-        index_params = {
-            "metric_type": "COSINE",
-            "index_type": "IVF_FLAT",
-            "params": {"nlist": 128},
-        }
-        collection.create_index(field_name="embedding", index_params=index_params)
+    index_params = {
+        "metric_type": "COSINE",
+        "index_type": "IVF_FLAT",
+        "params": {"nlist": 128},
+    }
+    collection.create_index(field_name="embedding", index_params=index_params)
 
     return collection
 

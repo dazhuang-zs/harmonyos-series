@@ -1,4 +1,7 @@
+import logging
 from src.core.llm_provider import get_llm_provider
+
+logger = logging.getLogger(__name__)
 
 CODEGEN_SYSTEM_PROMPT = """你是一位 HarmonyOS 开发专家，擅长 ArkTS/ArkUI 编程。
 请根据用户需求生成可运行的 ArkTS 代码。
@@ -13,27 +16,30 @@ CODEGEN_SYSTEM_PROMPT = """你是一位 HarmonyOS 开发专家，擅长 ArkTS/Ar
 
 async def generate(requirement: str, language: str = "ArkTS", include_tests: bool = False) -> dict:
     """根据需求生成 ArkTS 代码"""
-    llm_provider = get_llm_provider()
+    try:
+        llm_provider = get_llm_provider()
 
-    prompt = f"请用 {language} 实现以下需求：\n\n{requirement}"
-    if include_tests:
-        prompt += "\n\n请同时生成单元测试代码。"
+        prompt = f"请用 {language} 实现以下需求：\n\n{requirement}"
+        if include_tests:
+            prompt += "\n\n请同时生成单元测试代码。"
 
-    messages = [
-        {"role": "system", "content": CODEGEN_SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
+        messages = [
+            {"role": "system", "content": CODEGEN_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
 
-    result = await llm_provider.chat(messages)
+        result = await llm_provider.chat(messages)
+        files = _parse_files(result)
 
-    # 解析多文件输出
-    files = _parse_files(result)
+        return {
+            "code": result,
+            "files": files,
+            "explanation": f"根据需求生成了 {len(files)} 个文件" if files else "生成完成",
+        }
 
-    return {
-        "code": result,
-        "files": files,
-        "explanation": f"根据需求生成了 {len(files)} 个文件" if files else "生成完成",
-    }
+    except Exception as e:
+        logger.error(f"Code generation failed: {e}", exc_info=True)
+        return {"code": "", "files": [], "explanation": f"生成失败：{str(e)}"}
 
 
 def _parse_files(content: str) -> list[dict]:
@@ -45,7 +51,7 @@ def _parse_files(content: str) -> list[dict]:
 
     for part in parts[1:]:
         if "===" in part:
-            filename, file_content = part.split("===" , 1)
+            filename, file_content = part.split("===", 1)
             files.append({
                 "filename": filename.strip(),
                 "content": file_content.strip(),

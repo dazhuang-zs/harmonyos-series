@@ -12,11 +12,14 @@
 
 **进度**:
 - [x] 项目立项书
-- [ ] M1: RAG 文档问答（第 2-4 周）
-- [ ] M2: 代码生成（第 5-6 周）
-- [ ] M3: 错误诊断（第 7-8 周）
-- [ ] M4: 代码迁移（第 9-10 周）
-- [ ] M5: CSDN 集成（第 11-12 周）
+- [x] M0: 项目骨架 & LLM 抽象层（第 1 周）
+- [x] M1: RAG 文档问答（第 2-4 周）
+- [x] M2: 代码生成（第 5-6 周）
+- [x] M3: 错误诊断（第 7-8 周）
+- [x] M4: 代码迁移（第 9-10 周）
+- [x] M5: CSDN 集成 + Web UI（第 11-12 周）
+- [ ] 文档爬取 & 知识库构建
+- [ ] 部署 & 上线
 
 ---
 
@@ -192,8 +195,8 @@
 ### 安装
 
 ```bash
-git clone https://github.com/dazhuang-zs/harmonyos-mimo-assistant.git
-cd harmonyos-mimo-assistant
+git clone https://github.com/dazhuang-zs/harmonyos-series.git
+cd harmonyos-series
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate  # Windows
@@ -203,7 +206,7 @@ pip install -r requirements.txt
 ### 配置
 
 ```bash
-cp config/example.env .env
+cp .env.example .env
 # 编辑 .env 并填写：
 # - MIMO_API_KEY=your_mimo_api_key
 # - MILVUS_HOST=localhost

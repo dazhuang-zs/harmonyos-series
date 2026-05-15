@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,6 +7,11 @@ from src.codegen.router import router as codegen_router
 from src.diagnose.router import router as diagnose_router
 from src.migrate.router import router as migrate_router
 from src.publish.router import router as publish_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 app = FastAPI(
     title="HarmonyOS 开发助手",
