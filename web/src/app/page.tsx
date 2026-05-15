@@ -1,158 +1,221 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { SendHorizontal, Bot, User, ExternalLink } from "lucide-react";
-import { ragQuery } from "@/lib/api";
-import { LoadingDots, ErrorBox } from "@/components/ui";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  sources?: { text: string; source: string; score: number }[];
-}
-
-function SourceCard({ source }: { source: { text: string; source: string; score: number } }) {
-  return (
-    <div className="mt-2 p-2 rounded bg-zinc-100 dark:bg-zinc-800 text-xs">
-      <div className="flex items-center gap-1 text-zinc-500 mb-1">
-        <ExternalLink size={12} />
-        <span className="truncate">{source.source}</span>
-        <span className="ml-auto text-zinc-400">{(source.score * 100).toFixed(0)}%</span>
-      </div>
-      <div className="text-zinc-600 dark:text-zinc-400 line-clamp-3">{source.text}</div>
-    </div>
-  );
-}
+import { useState, useEffect, useRef } from "react";
+import ChatSidebar from "@/components/ChatSidebar";
+import ChatMessage, { ChatMsg } from "@/components/ChatMessage";
+import ChatInput from "@/components/ChatInput";
+import {
+  listConversations,
+  createConversation,
+  getConversation,
+  deleteConversation,
+  chatStream,
+  type Conversation,
+} from "@/lib/api";
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState("");
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState("rag");
+  const [streamingContent, setStreamingContent] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Load conversations on mount
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    listConversations().then(setConversations).catch(console.error);
+  }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const q = input.trim();
-    if (!q || loading) return;
+  // Load messages when conversation changes
+  useEffect(() => {
+    if (!activeConvId) {
+      setMessages([]);
+      return;
+    }
+    getConversation(activeConvId)
+      .then((data) => {
+        setMessages(
+          data.messages.map((m) => ({
+            role: m.role as ChatMsg["role"],
+            content: m.content,
+          }))
+        );
+      })
+      .catch(console.error);
+  }, [activeConvId]);
 
-    setInput("");
-    setError("");
-    setMessages((prev) => [...prev, { role: "user", content: q }]);
-    setLoading(true);
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingContent]);
+
+  const handleNewConversation = async () => {
+    try {
+      const conv = await createConversation();
+      setConversations((prev) => [conv, ...prev]);
+      setActiveConvId(conv.conversation_id);
+      setMessages([]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    try {
+      await deleteConversation(id);
+      setConversations((prev) => prev.filter((c) => c.conversation_id !== id));
+      if (activeConvId === id) {
+        setActiveConvId("");
+        setMessages([]);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSend = async (message: string) => {
+    // Add user message
+    const userMsg: ChatMsg = { role: "user", content: message };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+    setStreamingContent("");
 
     try {
-      const result = await ragQuery(q, 5);
+      let convId = activeConvId;
+
+      // Create conversation if none selected
+      if (!convId) {
+        const conv = await createConversation(message.slice(0, 20));
+        convId = conv.conversation_id;
+        setActiveConvId(convId);
+        setConversations((prev) => [conv, ...prev]);
+      }
+
+      // Stream response
+      let fullReply = "";
+      await chatStream(
+        { message, conversation_id: convId, mode },
+        (chunk) => {
+          fullReply += chunk;
+          setStreamingContent(fullReply);
+        },
+        (doneConvId) => {
+          // Add assistant message
+          const assistantMsg: ChatMsg = {
+            role: "assistant",
+            content: fullReply,
+          };
+          setMessages((prev) => [...prev, assistantMsg]);
+          setStreamingContent("");
+
+          // Refresh conversations to update title
+          listConversations().then(setConversations);
+
+          if (doneConvId && doneConvId !== convId) {
+            setActiveConvId(doneConvId);
+          }
+        }
+      );
+    } catch (e) {
+      console.error(e);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: result.answer, sources: result.sources },
+        {
+          role: "assistant",
+          content: "抱歉，发生了错误。请检查后端服务是否启动。",
+        },
       ]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "未知错误");
+      setStreamingContent("");
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col h-[calc(100vh-3.5rem)]">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-        {messages.length === 0 && (
-          <div className="text-center py-20">
-            <h1 className="text-4xl mb-3">🦋</h1>
-            <h2 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200 mb-2">
-              HarmonyOS 开发助手
-            </h2>
-            <p className="text-zinc-500 dark:text-zinc-400 text-sm">
-              基于 RAG 的鸿蒙文档问答 · 问我 ArkTS / ArkUI 相关问题
-            </p>
-            <div className="mt-6 flex flex-wrap justify-center gap-2">
-              {["@State 和 @Prop 有什么区别？", "怎么实现页面路由跳转？", "ArkTS 中如何发起 HTTP 请求？"].map(
-                (q) => (
+    <div className="flex h-screen bg-white dark:bg-zinc-900">
+      {/* Sidebar */}
+      <ChatSidebar
+        conversations={conversations}
+        activeId={activeConvId}
+        onSelect={setActiveConvId}
+        onNew={handleNewConversation}
+        onDelete={handleDeleteConversation}
+      />
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          {messages.length === 0 && !streamingContent && (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mb-4">
+                <span className="text-3xl">🤖</span>
+              </div>
+              <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">
+                HarmonyOS 开发助手
+              </h2>
+              <p className="text-zinc-500 max-w-md">
+                MiMo 大模型驱动的鸿蒙开发助手。支持 RAG 文档问答、ArkTS
+                代码生成、错误诊断和 Agent 自主决策。
+              </p>
+              <div className="grid grid-cols-2 gap-3 mt-8 max-w-lg w-full">
+                {[
+                  { icon: "📚", title: "文档问答", desc: "基于华为官方文档回答问题" },
+                  { icon: "🤖", title: "Agent 模式", desc: "自动调用工具解决问题" },
+                  { icon: "💻", title: "代码生成", desc: "生成 ArkTS/ArkUI 代码" },
+                  { icon: "🔍", title: "错误诊断", desc: "分析编译错误并修复" },
+                ].map((item) => (
                   <button
-                    key={q}
-                    onClick={() => setInput(q)}
-                    className="px-3 py-1.5 text-xs rounded-full border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    key={item.title}
+                    onClick={() => {
+                      setMode(
+                        item.title === "文档问答"
+                          ? "rag"
+                          : item.title === "Agent 模式"
+                          ? "agent"
+                          : item.title === "代码生成"
+                          ? "codegen"
+                          : "diagnose"
+                      );
+                    }}
+                    className="flex items-start gap-3 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors text-left"
                   >
-                    {q}
+                    <span className="text-2xl">{item.icon}</span>
+                    <div>
+                      <p className="font-medium text-sm text-zinc-900 dark:text-white">
+                        {item.title}
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-0.5">{item.desc}</p>
+                    </div>
                   </button>
-                )
-              )}
-            </div>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <div key={i} className="flex gap-3">
-            <div className="mt-0.5 flex-shrink-0">
-              {msg.role === "user" ? (
-                <div className="w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center">
-                  <User size={14} />
-                </div>
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-lg">
-                  🦋
-                </div>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium mb-1 text-zinc-500">
-                {msg.role === "user" ? "你" : "助手"}
+                ))}
               </div>
-              <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
-                {msg.content}
-              </div>
-              {msg.sources && msg.sources.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-xs text-zinc-400 cursor-pointer hover:text-zinc-600 dark:hover:text-zinc-300">
-                    参考来源 ({msg.sources.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {msg.sources.map((s, j) => (
-                      <SourceCard key={j} source={s} />
-                    ))}
-                  </div>
-                </details>
-              )}
             </div>
-          </div>
-        ))}
+          )}
 
-        {loading && (
-          <div className="flex gap-3">
-            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-lg">🦋</div>
-            <LoadingDots />
-          </div>
-        )}
-        {error && <ErrorBox message={error} />}
-        <div ref={bottomRef} />
-      </div>
+          {messages.map((msg, i) => (
+            <ChatMessage key={i} message={msg} />
+          ))}
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t bg-white dark:bg-zinc-900 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="输入你的鸿蒙开发问题…"
-            className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={loading}
-          />
-          <button
-            type="submit"
-            disabled={loading || !input.trim()}
-            className="p-2.5 rounded-xl bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-700 transition-colors"
-          >
-            <SendHorizontal size={18} />
-          </button>
+          {/* Streaming content */}
+          {streamingContent && (
+            <ChatMessage
+              message={{ role: "assistant", content: streamingContent }}
+            />
+          )}
+
+          <div ref={messagesEndRef} />
         </div>
-      </form>
+
+        {/* Input */}
+        <ChatInput
+          onSend={handleSend}
+          isLoading={isLoading}
+          mode={mode}
+          onModeChange={setMode}
+        />
+      </div>
     </div>
   );
 }

@@ -1,54 +1,129 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function request<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
+export interface Conversation {
+  conversation_id: string;
+  title: string;
+  message_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Message {
+  role: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface ChatRequest {
+  message: string;
+  conversation_id?: string;
+  mode?: "rag" | "agent" | "codegen" | "diagnose";
+  stream?: boolean;
+}
+
+export interface ChatResponse {
+  reply: string;
+  conversation_id: string;
+  mode: string;
+  sources?: { text: string; source: string; score: number }[];
+  steps?: { type: string; content: string; tool?: string }[];
+}
+
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    ...init,
   });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
-// ---- RAG ----
-export async function ragQuery(question: string, topK = 5, sessionId?: string) {
-  return request<{ answer: string; sources: { text: string; source: string; score: number }[] }>(
-    `${API_BASE}/api/v1/rag/query`,
-    { question, top_k: topK, session_id: sessionId }
-  );
+// --- Conversations ---
+
+export async function listConversations(): Promise<Conversation[]> {
+  return fetchJSON("/api/v1/conversations/");
 }
 
-// ---- CodeGen ----
-export async function generateCode(requirement: string, language = "ArkTS", includeTests = false) {
-  return request<{ code: string; files: { filename: string; content: string }[]; explanation: string }>(
-    `${API_BASE}/api/v1/codegen/generate`,
-    { requirement, language, include_tests: includeTests }
-  );
+export async function createConversation(
+  title = "新对话"
+): Promise<Conversation> {
+  return fetchJSON("/api/v1/conversations/", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
 }
 
-// ---- Diagnose ----
-export async function diagnoseError(errorMessage: string, codeContext = "") {
-  return request<{ diagnosis: string; fix_suggestions: string[]; related_docs: unknown[] }>(
-    `${API_BASE}/api/v1/diagnose/`,
-    { error_message: errorMessage, code_context: codeContext }
-  );
+export async function getConversation(id: string) {
+  return fetchJSON<{
+    conversation_id: string;
+    title: string;
+    messages: Message[];
+    user_preferences: Record<string, unknown>;
+  }>(`/api/v1/conversations/${id}`);
 }
 
-// ---- Migrate ----
-export async function migrateCode(androidCode: string, sourceLanguage = "Kotlin") {
-  return request<{ migrated_code: string; migration_notes: string[]; before_after: { before: string; after: string } }>(
-    `${API_BASE}/api/v1/migrate/`,
-    { android_code: androidCode, source_language: sourceLanguage }
-  );
+export async function deleteConversation(id: string) {
+  return fetchJSON(`/api/v1/conversations/${id}`, { method: "DELETE" });
 }
 
-// ---- Publish ----
-export async function publishArticle(title: string, content: string, tags: string[] = []) {
-  return request<{ article_id: string; url: string; status: string }>(
-    `${API_BASE}/api/v1/publish/`,
-    { title, content, tags }
-  );
+// --- Chat ---
+
+export async function chat(req: ChatRequest): Promise<ChatResponse> {
+  return fetchJSON("/api/v1/chat/", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function chatStream(
+  req: ChatRequest,
+  onChunk: (text: string) => void,
+  onDone?: (conversationId: string) => void
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6);
+
+      if (data === "[DONE]") {
+        onDone?.("");
+        return;
+      }
+
+      if (data.startsWith("[DONE:")) {
+        const id = data.slice(6, -1);
+        onDone?.(id);
+        return;
+      }
+
+      onChunk(data);
+    }
+  }
+}
+
+// --- Health ---
+
+export async function healthCheck(): Promise<{ status: string }> {
+  return fetchJSON("/health");
 }

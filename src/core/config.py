@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     # CSDN
     csdn_cookie: str = ""
 
+    # Semantic Cache
+    cache_similarity_threshold: float = 0.95
+    cache_max_size: int = 1000
+
+    # Guardrails
+    guardrails_block_on_injection: bool = True
+
+    # Observability
+    observability_enabled: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

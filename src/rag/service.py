@@ -1,11 +1,15 @@
-import logging
-from typing import Optional
+"""RAG 服务：文档问答 + 流式输出 + 语义缓存 + 安全防护"""
+
+from typing import AsyncIterator
+import uuid
 
 from src.core.llm_provider import get_llm_provider
 from src.core.embedding_provider import get_embedding_provider
 from src.core.vector_store import search_similar, insert_documents
-
-logger = logging.getLogger(__name__)
+from src.cache.semantic_cache import semantic_cache
+from src.guardrails.input_filter import input_filter
+from src.guardrails.output_filter import output_filter
+from src.observability.tracer import tracer
 
 RAG_SYSTEM_PROMPT = """你是 HarmonyOS 开发助手，专注于鸿蒙应用开发领域。
 请根据提供的参考文档回答用户问题。如果文档中没有相关信息，请明确告知。
@@ -14,84 +18,100 @@ RAG_SYSTEM_PROMPT = """你是 HarmonyOS 开发助手，专注于鸿蒙应用开�
 2. 提供代码示例（如果适用）
 3. 使用中文回答"""
 
-# 简易会话存储（生产环境应使用 Redis）
-_conversations: dict[str, list[dict]] = {}
-MAX_HISTORY = 10
+
+async def _build_context(question: str, top_k: int) -> tuple[list[dict], str]:
+    """构建检索上下文"""
+    embedding_provider = get_embedding_provider()
+    query_embedding = await embedding_provider.embed_query(question)
+    docs = await search_similar(query_embedding, top_k=top_k)
+    context = "\n\n---\n\n".join(
+        [f"【来源：{doc['source']}】\n{doc['text']}" for doc in docs]
+    )
+    return docs, context
 
 
-def _get_history(session_id: Optional[str]) -> list[dict]:
-    if session_id and session_id in _conversations:
-        return _conversations[session_id][-MAX_HISTORY:]
-    return []
-
-
-def _save_history(session_id: str, question: str, answer: str):
-    if session_id:
-        if session_id not in _conversations:
-            _conversations[session_id] = []
-        _conversations[session_id].append({"role": "user", "content": question})
-        _conversations[session_id].append({"role": "assistant", "content": answer})
-        # 限制总条数
-        if len(_conversations[session_id]) > MAX_HISTORY * 2:
-            _conversations[session_id] = _conversations[session_id][-MAX_HISTORY * 2:]
-
-
-async def query(question: str, top_k: int = 5, session_id: Optional[str] = None) -> dict:
-    """RAG 问答流程：Embedding → 检索 → LLM 生成"""
-    try:
-        embedding_provider = get_embedding_provider()
-        llm_provider = get_llm_provider()
-
-        # 1. 将问题向量化
-        query_embedding = await embedding_provider.embed_query(question)
-
-        # 2. 在 Milvus 中检索相关文档
-        docs = await search_similar(query_embedding, top_k=top_k)
-
-        # 3. 拼接 Prompt
-        context = "\n\n---\n\n".join(
-            [f"【来源：{doc['source']}】\n{doc['text']}" for doc in docs]
-        )
-
-        messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
-
-        # 注入历史对话
-        history = _get_history(session_id)
-        if history:
-            messages.extend(history)
-
-        messages.append({
+def _build_messages(context: str, question: str) -> list[dict]:
+    return [
+        {"role": "system", "content": RAG_SYSTEM_PROMPT},
+        {
             "role": "user",
             "content": f"参考文档：\n{context}\n\n用户问题：{question}",
-        })
+        },
+    ]
 
-        # 4. 调用 LLM 生成答案
+
+async def query(question: str, top_k: int = 5) -> dict:
+    """RAG 问答流程：安全检查 → 缓存 → Embedding → 检索 → LLM 生成 → 输出校验"""
+    trace = tracer.start_trace(uuid.uuid4().hex[:12], "rag_query", {"question": question[:100]})
+
+    # 1. 输入安全检查
+    safety = input_filter.check(question)
+    if not safety["safe"]:
+        return {"answer": f"输入被安全过滤器拦截: {safety['reason']}", "sources": []}
+
+    question = input_filter.sanitize(question)
+
+    # 2. 语义缓存检查
+    cached = await semantic_cache.get(question)
+    if cached:
+        return {"answer": cached["answer"], "sources": cached.get("sources", []), "cache_hit": True}
+
+    # 3. 检索
+    llm_provider = get_llm_provider()
+    async with tracer.trace_span("retrieval", {"top_k": top_k}):
+        docs, context = await _build_context(question, top_k)
+
+    # 4. LLM 生成
+    messages = _build_messages(context, question)
+    async with tracer.trace_span("llm_generation"):
         answer = await llm_provider.chat(messages)
 
-        # 5. 保存会话历史
-        _save_history(session_id, question, answer)
+    # 5. 输出安全校验
+    output_check = output_filter.check(answer)
+    if not output_check["safe"]:
+        answer = output_filter.sanitize(answer)
+        answer += "\n\n> ⚠️ 注意：回答中可能包含不安全内容，已自动过滤。"
 
-        return {"answer": answer, "sources": docs}
+    # 6. 写入缓存
+    await semantic_cache.put(question, answer, docs)
 
-    except Exception as e:
-        logger.error(f"RAG query failed: {e}", exc_info=True)
-        return {"answer": f"查询失败：{str(e)}", "sources": []}
+    return {"answer": answer, "sources": docs}
+
+
+async def query_stream(question: str, top_k: int = 5) -> AsyncIterator[str]:
+    """RAG 问答流程（流式输出）"""
+    # 输入安全检查
+    safety = input_filter.check(question)
+    if not safety["safe"]:
+        yield f"输入被安全过滤器拦截: {safety['reason']}"
+        return
+
+    question = input_filter.sanitize(question)
+
+    # 缓存检查
+    cached = await semantic_cache.get(question)
+    if cached:
+        yield cached["answer"]
+        return
+
+    llm_provider = get_llm_provider()
+    docs, context = await _build_context(question, top_k)
+    messages = _build_messages(context, question)
+
+    full_answer = ""
+    async for chunk in llm_provider.chat_stream(messages):
+        full_answer += chunk
+        yield chunk
+
+    # 异步写入缓存（不阻塞）
+    await semantic_cache.put(question, full_answer, docs)
 
 
 async def ingest(texts: list[str], sources: list[str]) -> int:
     """批量导入文档到知识库"""
-    try:
-        embedding_provider = get_embedding_provider()
+    embedding_provider = get_embedding_provider()
 
-        # 1. 批量向量化
-        embeddings = await embedding_provider.embed(texts)
+    embeddings = await embedding_provider.embed(texts)
+    await insert_documents(texts, sources, embeddings)
 
-        # 2. 存入 Milvus
-        await insert_documents(texts, sources, embeddings)
-
-        logger.info(f"Ingested {len(texts)} documents")
-        return len(texts)
-
-    except Exception as e:
-        logger.error(f"Ingest failed: {e}", exc_info=True)
-        raise
+    return len(texts)
