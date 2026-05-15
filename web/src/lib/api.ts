@@ -81,7 +81,7 @@ export async function chatStream(
   onChunk: (text: string) => void,
   onDone?: (conversationId: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/stream/`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
