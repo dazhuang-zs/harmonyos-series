@@ -1,5 +1,3 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 export interface Conversation {
   conversation_id: string;
   title: string;
@@ -29,8 +27,11 @@ export interface ChatResponse {
   steps?: { type: string; content: string; tool?: string }[];
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
@@ -80,7 +81,7 @@ export async function chatStream(
   onChunk: (text: string) => void,
   onDone?: (conversationId: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/stream/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
