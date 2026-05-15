@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import ChatSidebar from "@/components/ChatSidebar";
 import ChatMessage, { ChatMsg } from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
@@ -21,6 +21,8 @@ export default function Home() {
   const [mode, setMode] = useState("rag");
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const streamingConvIdRef = useRef<string>("");
 
   // Load conversations on mount
   useEffect(() => {
@@ -50,12 +52,37 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
+  // Cancel stream and clear when switching conversation
+  const handleSelectConversation = useCallback(
+    (id: string) => {
+      if (id === activeConvId) return;
+      // Cancel ongoing stream
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      // If streaming was for a different conv, finalize its message
+      if (streamingContent && streamingConvIdRef.current && streamingConvIdRef.current !== id) {
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.role === "assistant" && lastMsg.content === streamingContent) return prev;
+          return [...prev, { role: "assistant" as const, content: streamingContent }];
+        });
+      }
+      setStreamingContent("");
+      setIsLoading(false);
+      setActiveConvId(id);
+    },
+    [activeConvId, streamingContent]
+  );
+
   const handleNewConversation = async () => {
     try {
       const conv = await createConversation();
       setConversations((prev) => [conv, ...prev]);
       setActiveConvId(conv.conversation_id);
       setMessages([]);
+      setStreamingContent("");
     } catch (e) {
       console.error(e);
     }
@@ -68,6 +95,7 @@ export default function Home() {
       if (activeConvId === id) {
         setActiveConvId("");
         setMessages([]);
+        setStreamingContent("");
       }
     } catch (e) {
       console.error(e);
@@ -75,6 +103,13 @@ export default function Home() {
   };
 
   const handleSend = async (message: string) => {
+    // Cancel any previous stream
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     // Add user message
     const userMsg: ChatMsg = { role: "user", content: message };
     setMessages((prev) => [...prev, userMsg]);
@@ -92,32 +127,40 @@ export default function Home() {
         setConversations((prev) => [conv, ...prev]);
       }
 
+      streamingConvIdRef.current = convId;
+
       // Stream response
       let fullReply = "";
       await chatStream(
         { message, conversation_id: convId, mode },
         (chunk) => {
-          fullReply += chunk;
-          setStreamingContent(fullReply);
+          // Only update if still on same conversation
+          if (streamingConvIdRef.current === activeConvId || !activeConvId) {
+            fullReply += chunk;
+            setStreamingContent(fullReply);
+          }
         },
         (doneConvId) => {
-          // Add assistant message
-          const assistantMsg: ChatMsg = {
-            role: "assistant",
-            content: fullReply,
-          };
-          setMessages((prev) => [...prev, assistantMsg]);
-          setStreamingContent("");
+          // Only finalize if still on same conversation
+          if (streamingConvIdRef.current === activeConvId || !activeConvId) {
+            const assistantMsg: ChatMsg = {
+              role: "assistant",
+              content: fullReply,
+            };
+            setMessages((prev) => [...prev, assistantMsg]);
+            setStreamingContent("");
+          }
 
-          // Refresh conversations to update title
           listConversations().then(setConversations);
 
           if (doneConvId && doneConvId !== convId) {
             setActiveConvId(doneConvId);
           }
-        }
+        },
+        controller.signal
       );
-    } catch (e) {
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
       console.error(e);
       setMessages((prev) => [
         ...prev,
@@ -129,6 +172,9 @@ export default function Home() {
       setStreamingContent("");
     } finally {
       setIsLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   };
 
@@ -138,7 +184,7 @@ export default function Home() {
       <ChatSidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={setActiveConvId}
+        onSelect={handleSelectConversation}
         onNew={handleNewConversation}
         onDelete={handleDeleteConversation}
       />
@@ -198,7 +244,7 @@ export default function Home() {
             <ChatMessage key={i} message={msg} />
           ))}
 
-          {/* Streaming content */}
+          {/* Streaming content — only show for active conversation */}
           {streamingContent && (
             <ChatMessage
               message={{ role: "assistant", content: streamingContent }}

@@ -79,12 +79,14 @@ export async function chat(req: ChatRequest): Promise<ChatResponse> {
 export async function chatStream(
   req: ChatRequest,
   onChunk: (text: string) => void,
-  onDone?: (conversationId: string) => void
+  onDone?: (conversationId: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+    signal,
   });
 
   if (!res.ok) throw new Error(`API error: ${res.status}`);
