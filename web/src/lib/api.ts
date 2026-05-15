@@ -97,7 +97,11 @@ export async function chatStream(
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      // 流结束但没收到 [DONE]，也要通知完成
+      onDone?.("");
+      return;
+    }
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");

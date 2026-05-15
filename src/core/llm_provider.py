@@ -21,6 +21,14 @@ class LLMProvider(ABC):
         ...
 
 
+def _extract_stream_content(chunk) -> str | None:
+    """从流式响应 chunk 中安全提取内容"""
+    if not chunk.choices:
+        return None
+    delta = chunk.choices[0].delta
+    return delta.content if delta and delta.content else None
+
+
 class MiMoProvider(LLMProvider):
     """MiMo API（OpenAI 兼容接口）"""
 
@@ -49,8 +57,9 @@ class MiMoProvider(LLMProvider):
             stream=True,
         )
         async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            content = _extract_stream_content(chunk)
+            if content:
+                yield content
 
 
 class DeepSeekProvider(LLMProvider):
@@ -81,8 +90,9 @@ class DeepSeekProvider(LLMProvider):
             stream=True,
         )
         async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            content = _extract_stream_content(chunk)
+            if content:
+                yield content
 
 
 class OpenAIProvider(LLMProvider):
@@ -113,8 +123,9 @@ class OpenAIProvider(LLMProvider):
             stream=True,
         )
         async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+            content = _extract_stream_content(chunk)
+            if content:
+                yield content
 
 
 def get_llm_provider() -> LLMProvider:

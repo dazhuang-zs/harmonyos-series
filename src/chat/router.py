@@ -70,19 +70,33 @@ async def chat_stream(req: ChatRequest):
 
     async def event_generator():
         full_reply = ""
+        try:
+            if req.mode == "agent":
+                llm = get_llm_provider()
+                async for chunk in run_react_stream(llm, req.message):
+                    full_reply += chunk
+                    yield f"data: {chunk}\n\n"
+            elif req.mode == "codegen":
+                result = await codegen_generate(req.message)
+                full_reply = result["code"]
+                yield f"data: {full_reply}\n\n"
+            elif req.mode == "diagnose":
+                result = await diagnose_error(req.message)
+                full_reply = result["diagnosis"]
+                yield f"data: {full_reply}\n\n"
+            else:
+                # RAG 流式
+                async for chunk in rag_query_stream(req.message):
+                    full_reply += chunk
+                    yield f"data: {chunk}\n\n"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Stream error: {e}", exc_info=True)
+            if not full_reply:
+                yield f"data: 抱歉，处理请求时出错：{e}\n\n"
 
-        if req.mode == "agent":
-            llm = get_llm_provider()
-            async for chunk in run_react_stream(llm, req.message):
-                full_reply += chunk
-                yield f"data: {chunk}\n\n"
-        else:
-            # RAG 流式
-            async for chunk in rag_query_stream(req.message):
-                full_reply += chunk
-                yield f"data: {chunk}\n\n"
-
-        store.add_message(conversation_id, "assistant", full_reply)
+        if full_reply:
+            store.add_message(conversation_id, "assistant", full_reply)
         yield f"data: [DONE:{conversation_id}]\n\n"
 
     return StreamingResponse(
